@@ -1,7 +1,7 @@
 // Игрок: движение WASD, рисование траектории, три спелла, снаряды игрока.
 import { dist, dirTo, slide, inArena, inObstacle, disc, type Pt, type Gfx } from './map';
+import { PLAYER, SPELL } from './config';
 
-const MOVE_SPEED = 220, SHOT_SPEED = 900, COOLDOWN = 0.6, MAX_POINTS = 8, MINE_STEP = 60, PLAYER_HP = 3;
 
 export type SpellId = 'line' | 'volley' | 'wall';
 export const SPELLS: Record<SpellId, { name: string; color: number }> = {
@@ -27,10 +27,10 @@ export interface Player {
 }
 
 export const newPlayer = (): Player =>
-  ({ x: 100, y: 380, r: 14, hp: PLAYER_HP, maxHp: PLAYER_HP, inv: 0, pts: [], spell: 'line', cd: 0 });
+  ({ x: PLAYER.start.x, y: PLAYER.start.y, r: PLAYER.radius, hp: PLAYER.hp, maxHp: PLAYER.hp, inv: 0, pts: [], spell: 'line', cd: 0 });
 
 const newShot = (o: Partial<PlayerShot>): PlayerShot => ({
-  x: 0, y: 0, r: 8, dx: 0, dy: 0, speed: SHOT_SPEED, path: [], dmg: 1, mine: false, life: 0,
+  x: 0, y: 0, r: SPELL.line.radius, dx: 0, dy: 0, speed: SPELL.line.speed, path: [], dmg: SPELL.line.damage, mine: false, life: 0,
   color: 0xffffff, minDist: Infinity, hit: false, dead: false, ...o,
 });
 
@@ -41,7 +41,7 @@ export function updatePlayer(p: Player, keys: Set<string>, dt: number, sdt: numb
   const mx = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
   const my = (keys.has('KeyS') ? 1 : 0) - (keys.has('KeyW') ? 1 : 0);
   const len = Math.hypot(mx, my);   // нормализация диагоналей
-  if (len) slide(p, (mx / len) * MOVE_SPEED * sdt, (my / len) * MOVE_SPEED * sdt, p.r);
+  if (len) slide(p, (mx / len) * PLAYER.speed * sdt, (my / len) * PLAYER.speed * sdt, p.r);
 }
 
 // ---------- траектория ----------
@@ -50,7 +50,7 @@ export const cancelPath = (p: Player) => { p.pts = []; };
 /** ЛКМ: по игроку — начать заново, по пустому месту — добавить точку. */
 export function clickAt(p: Player, m: Pt) {
   if (dist(m, p) <= p.r + 6) cancelPath(p);
-  else if (p.pts.length < MAX_POINTS && inArena(m.x, m.y, 0) && !inObstacle(m.x, m.y, 0)) p.pts.push(m);
+  else if (p.pts.length < SPELL.maxPoints && inArena(m.x, m.y, 0) && !inObstacle(m.x, m.y, 0)) p.pts.push(m);
 }
 
 // ---------- запуск спеллов ----------
@@ -59,9 +59,9 @@ export function launch(p: Player, shots: PlayerShot[]) {
   const path = p.pts.map(q => ({ ...q }));
   const color = SPELLS[p.spell].color;
   if (p.spell === 'wall') placeMines(p, path, color, shots);
-  else if (p.spell === 'volley') for (const q of path) shots.push(aimedShot(p, q, { r: 4, path: [q], dmg: 0.5, speed: 700, color }));
+  else if (p.spell === 'volley') for (const q of path) shots.push(aimedShot(p, q, { r: SPELL.volley.radius, path: [q], dmg: SPELL.volley.damage, speed: SPELL.volley.speed, color }));
   else shots.push(aimedShot(p, path[0], { path, color }));
-  p.cd = COOLDOWN;
+  p.cd = SPELL.cooldown;
   cancelPath(p);
 }
 
@@ -76,11 +76,11 @@ function placeMines(p: Player, path: Pt[], color: number, shots: PlayerShot[]) {
   let prev: Pt = { x: p.x, y: p.y }, carry = 0;
   for (const q of path) {
     const len = dist(prev, q);
-    let s = MINE_STEP - carry;
-    for (; s <= len && len > 0; s += MINE_STEP) {
-      shots.push(newShot({ x: prev.x + ((q.x - prev.x) * s) / len, y: prev.y + ((q.y - prev.y) * s) / len, r: 6, mine: true, life: 3, color }));
+    let s = SPELL.wall.spacing - carry;
+    for (; s <= len && len > 0; s += SPELL.wall.spacing) {
+      shots.push(newShot({ x: prev.x + ((q.x - prev.x) * s) / len, y: prev.y + ((q.y - prev.y) * s) / len, r: SPELL.wall.radius, mine: true, life: SPELL.wall.life, color }));
     }
-    carry = len - (s - MINE_STEP);
+    carry = len - (s - SPELL.wall.spacing);
     prev = q;
   }
 }
@@ -93,7 +93,7 @@ export function drawPlayer(g: Gfx, p: Player, shots: PlayerShot[], mouse: Pt, no
     let prev: Pt = p;
     g.lineStyle(2, color, 0.6);
     for (const q of p.pts) { g.lineBetween(prev.x, prev.y, q.x, q.y); if (p.spell !== 'volley') prev = q; }
-    if (p.pts.length < MAX_POINTS && inArena(mouse.x, mouse.y, 0)) {
+    if (p.pts.length < SPELL.maxPoints && inArena(mouse.x, mouse.y, 0)) {
       g.lineStyle(2, color, 0.3); g.lineBetween(prev.x, prev.y, mouse.x, mouse.y);
     }
     p.pts.forEach(q => disc(g, { ...q, r: 4 }, color));

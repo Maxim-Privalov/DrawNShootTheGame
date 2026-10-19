@@ -1,6 +1,7 @@
 // Сцена Phaser: ввод, пауза, подсказки, порядок обновления, HUD. Логика — в map.ts, player.ts, bot.ts.
 import Phaser from 'phaser';
-import { W, H, AX, TS, drawMap, updateStage, updatePlayerShots, updateBotShots, updateContact, checkEnd, type Game, type Gfx } from './map';
+import { W, H, AX, TIME_SCALE } from './config';
+import { drawMap, updateStage, updatePlayerShots, updateBotShots, updateContact, checkEnd, type Game, type Gfx } from './map';
 import { SPELLS, newPlayer, updatePlayer, clickAt, cancelPath, launch, drawPlayer, type SpellId } from './player';
 import { newBot, updateBot, drawBot } from './bot';
 
@@ -64,7 +65,7 @@ class Main extends Phaser.Scene {
 
   update(_time: number, delta: number) {
     const dt = Math.min(delta, 50) / 1000; // реальное время (кулдауны, телеграф)
-    const sdt = dt * TS;                   // замедленное время (движение)
+    const sdt = dt * TIME_SCALE;                   // замедленное время (движение)
     const game = this.round;
     if (!game.over && !this.paused) {
       updateStage(game, dt);

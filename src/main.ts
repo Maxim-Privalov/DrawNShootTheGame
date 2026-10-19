@@ -1,6 +1,6 @@
 // Сцена Phaser: ввод, пауза, подсказки, порядок обновления, HUD. Логика — в map.ts, player.ts, bot.ts.
 import Phaser from 'phaser';
-import { W, H, AX, TS, drawMap, updatePlayerShots, updateBotShots, checkEnd, type Game } from './map';
+import { W, H, AX, TS, drawMap, updateStage, updatePlayerShots, updateBotShots, updateContact, checkEnd, type Game } from './map';
 import { SPELLS, newPlayer, updatePlayer, clickAt, launch, drawPlayer, type SpellId } from './player';
 import { newBot, updateBot, drawBot } from './bot';
 
@@ -10,7 +10,7 @@ const LEGEND = 'WASD — ход | ЛКМ — поставить точку | Л�
 const INTRO = 'КАК ИГРАТЬ\n\nЛКМ по арене — ставить точки атаки (до 8)\nEnter — запустить атаку\n1 / 2 / 3 — выбрать заклинание\nWASD — двигаться,  P — пауза';
 const INTRO_SECONDS = 8; // последняя секунда — плавное исчезновение
 
-const newGame = (): Game => ({ player: newPlayer(), bot: newBot(), playerShots: [], botShots: [], score: 0, over: '' });
+const newGame = (): Game => ({ player: newPlayer(), bot: newBot(), playerShots: [], botShots: [], score: 0, over: '', stageBanner: 0 });
 
 class Main extends Phaser.Scene {
   round = newGame();
@@ -21,6 +21,7 @@ class Main extends Phaser.Scene {
   hud!: Phaser.GameObjects.Text;
   banner!: Phaser.GameObjects.Text;
   intro!: Phaser.GameObjects.Text;
+  stageText!: Phaser.GameObjects.Text;
 
   create() {
     this.g = this.add.graphics();
@@ -29,6 +30,7 @@ class Main extends Phaser.Scene {
     this.add.text(AX, H - 20, LEGEND, { ...style, fontSize: '13px', color: '#9aa3b8' });
     this.banner = this.add.text(W / 2, H / 2, '', { ...style, fontSize: '48px', color: '#ffffff', align: 'center', lineSpacing: 12 }).setOrigin(0.5).setVisible(false);
     this.intro = this.add.text(W / 2, 230, INTRO, { ...style, fontSize: '24px', align: 'center', lineSpacing: 10, backgroundColor: '#000000dd', padding: { x: 32, y: 24 } }).setOrigin(0.5);
+    this.stageText = this.add.text(W / 2, 150, 'STAGE 2', { fontFamily: 'monospace', fontSize: '96px', color: '#ff2222', fontStyle: 'bold' }).setOrigin(0.5).setVisible(false);
     this.input.mouse?.disableContextMenu();
 
     this.input.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
@@ -57,10 +59,12 @@ class Main extends Phaser.Scene {
     const sdt = dt * TS;                   // замедленное время (движение)
     const game = this.round;
     if (!game.over && !this.paused) {
+      updateStage(game, dt);
       updatePlayer(game.player, this.keys, dt, sdt);
       updateBot(game.bot, game.player, game.playerShots, game.botShots, dt, sdt);
       updatePlayerShots(game, dt, sdt);
       updateBotShots(game, sdt);
+      updateContact(game, dt);
       checkEnd(game);
       this.introLeft = Math.max(0, this.introLeft - dt);
     }
@@ -80,13 +84,15 @@ class Main extends Phaser.Scene {
       g.fillStyle(color, 1); g.fillRect(x, 20, w * Math.max(0, frac), 16);
     };
     bar(560, 260, player.hp / 3, 0x4da3ff);
-    bar(900, 340, bot.hp / 10, 0xff5577);
+    bar(900, 340, bot.hp / bot.maxHp, 0xff5577);
+    g.fillStyle(0xffffff, 1); g.fillRect(900 + 340 / 2 - 1, 15, 3, 26); // маркер: здесь начинается фаза 2
     const spells = SPELL_ORDER.map((id, i) => {
       const label = `${i + 1} ${SPELLS[id].name}`;
       return id === player.spell ? `[${label}]` : ` ${label} `;
     }).join(' ');
     this.hud.setText(`Счёт ${game.score}\n${spells}${player.cd > 0 ? '  …' : ''}`);
 
+    this.stageText.setVisible(game.stageBanner > 0).setAlpha(Math.min(1, game.stageBanner));
     this.intro.setVisible(this.introLeft > 0).setAlpha(Math.min(1, this.introLeft));
 
     const message = game.over

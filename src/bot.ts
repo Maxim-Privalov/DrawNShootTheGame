@@ -1,7 +1,11 @@
 // Бот. Фаза 1: преследование с обходом препятствий, минимальное уклонение, выстрелы с телеграфом.
 // Фаза 2: стрельба прекращается, бот вырастает и таранит игрока резкими выпадами.
-import { dist, isFree, slide, pushOut, type Pt, type Gfx } from './map';
+import { dist, dirTo, isFree, slide, pushOut, disc, type Pt, type Gfx } from './map';
 import type { Player, PlayerShot } from './player';
+
+const BOT_HP = 10;
+const PROBE_NEAR = 22, PROBE_FAR = 50; // насколько вперёд проверяется свободное место при выборе курса
+const SIDESTEP = 30;                   // насколько вбок проверяется место при уклонении
 
 // --- фаза 1 ---
 const SPEED = 190;            // базовая скорость (на экране умножается на замедление)
@@ -34,7 +38,7 @@ export interface Bot {
 }
 
 export const newBot = (): Bot => ({
-  x: 1180, y: 380, r: 16, hp: 10, maxHp: 10, stage: 1, contactCd: 0, timer: 0, tele: false, ang: 0,
+  x: 1180, y: 380, r: 16, hp: BOT_HP, maxHp: BOT_HP, stage: 1, contactCd: 0, timer: 0, tele: false, ang: 0,
   mode: 'chase', modeT: 1, lunge: { x: 0, y: 0 },
 });
 
@@ -43,12 +47,13 @@ export function updateBot(b: Bot, player: Player, playerShots: PlayerShot[], bot
   else updateStage2(b, player, dt, sdt);
 }
 
+/** Шаг бота в направлении dir со скоростью speed (стены учитываются). */
+const moveAlong = (b: Bot, dir: Pt, speed: number, sdt: number) => slide(b, dir.x * speed * sdt, dir.y * speed * sdt, b.r);
+
 // ---------- фаза 1 ----------
 function updateStage1(b: Bot, player: Player, playerShots: PlayerShot[], botShots: BotShot[], dt: number, sdt: number) {
   const dodgeDir = dodge(b, playerShots);
-  const dir = dodgeDir ?? keepDistance(b, player);
-  const speed = dodgeDir ? SPEED * DODGE_SPEED : SPEED;
-  slide(b, dir.x * speed * sdt, dir.y * speed * sdt, b.r);
+  moveAlong(b, dodgeDir ?? keepDistance(b, player), dodgeDir ? SPEED * DODGE_SPEED : SPEED, sdt);
   shoot(b, player, botShots, dt);
 }
 
@@ -71,15 +76,14 @@ function dodge(b: Bot, shots: PlayerShot[]): Pt | null {
   if (along <= 0 || Math.abs(cross) >= b.r + nearest.r) return null;
 
   const px = -nearest.dy, py = nearest.dx, side = cross >= 0 ? 1 : -1;
-  const open = (s: number) => isFree(b.x + px * s * 30, b.y + py * s * 30, b.r);
+  const open = (s: number) => isFree(b.x + px * s * SIDESTEP, b.y + py * s * SIDESTEP, b.r);
   const s = open(side) ? side : open(-side) ? -side : 0;
   return { x: px * s, y: py * s };
 }
 
 /** Дальше KEEP_MAX — идёт к игроку, ближе KEEP_MIN — отступает, между — кружит. */
 function keepDistance(b: Bot, p: Pt): Pt {
-  const tx = p.x - b.x, ty = p.y - b.y, d = Math.hypot(tx, ty) || 1;
-  const toPlayer = Math.atan2(ty, tx);
+  const d = dist(b, p), toPlayer = Math.atan2(p.y - b.y, p.x - b.x);
   return steer(b, d > KEEP_MAX ? toPlayer : d < KEEP_MIN ? toPlayer + Math.PI : toPlayer + Math.PI / 2);
 }
 
@@ -88,7 +92,7 @@ function steer(b: Bot, want: number): Pt {
   let bestAng = b.ang, bestScore = -Infinity;
   for (let i = 0; i < 16; i++) {
     const a = (i * Math.PI) / 8, c = Math.cos(a), s = Math.sin(a);
-    if (!isFree(b.x + c * 22, b.y + s * 22, b.r) || !isFree(b.x + c * 50, b.y + s * 50, b.r)) continue;
+    if (!isFree(b.x + c * PROBE_NEAR, b.y + s * PROBE_NEAR, b.r) || !isFree(b.x + c * PROBE_FAR, b.y + s * PROBE_FAR, b.r)) continue;
     const score = Math.cos(a - want) + 0.35 * Math.cos(a - b.ang); // второй член — инерция
     if (score > bestScore) { bestScore = score; bestAng = a; }
   }
@@ -104,8 +108,8 @@ function shoot(b: Bot, p: Pt, botShots: BotShot[], dt: number) {
     b.timer += dt;
     if (b.timer >= FIRE_EVERY) {
       b.timer = 0;
-      const d = dist(b, p) || 1;
-      botShots.push({ x: b.x, y: b.y, dx: (p.x - b.x) / d, dy: (p.y - b.y) / d, speed: SHOT_SPEED, r: 7, dead: false });
+      const u = dirTo(b, p);
+      botShots.push({ x: b.x, y: b.y, dx: u.x, dy: u.y, speed: SHOT_SPEED, r: 7, dead: false });
     }
   }
   b.tele = inRange && b.timer >= FIRE_EVERY - TELEGRAPH;
@@ -118,29 +122,26 @@ function updateStage2(b: Bot, p: Pt, dt: number, sdt: number) {
   pushOut(b, b.r);                                  // не застревает в стенах при росте
   b.modeT -= dt;
   b.tele = b.mode === 'windup';
-
-  const d = dist(b, p) || 1;
-  const toward = { x: (p.x - b.x) / d, y: (p.y - b.y) / d };
+  const toward = dirTo(b, p);
 
   if (b.mode === 'windup') {
     if (b.modeT <= 0) { b.mode = 'lunge'; b.modeT = LUNGE_TIME; b.lunge = toward; } // направление фиксируется здесь
   } else if (b.mode === 'lunge') {
-    slide(b, b.lunge.x * LUNGE_SPEED * sdt, b.lunge.y * LUNGE_SPEED * sdt, b.r);
+    moveAlong(b, b.lunge, LUNGE_SPEED, sdt);
     if (b.modeT <= 0) { b.mode = 'chase'; b.modeT = LUNGE_PAUSE; }
   } else {
-    const dir = steer(b, Math.atan2(toward.y, toward.x));
-    slide(b, dir.x * RAM_CHASE_SPEED * sdt, dir.y * RAM_CHASE_SPEED * sdt, b.r);
-    if (b.modeT <= 0 && d < LUNGE_RANGE) { b.mode = 'windup'; b.modeT = WINDUP; }
+    moveAlong(b, steer(b, Math.atan2(toward.y, toward.x)), RAM_CHASE_SPEED, sdt);
+    if (b.modeT <= 0 && dist(b, p) < LUNGE_RANGE) { b.mode = 'windup'; b.modeT = WINDUP; }
   }
 }
 
 // ---------- отрисовка ----------
 export function drawBot(g: Gfx, b: Bot, p: Pt, shots: BotShot[], now: number, active: boolean) {
-  g.fillStyle(0xff4455, 1); shots.forEach(s => g.fillCircle(s.x, s.y, s.r));
+  shots.forEach(s => disc(g, s, 0xff4455));
   if (b.tele && active) {
     g.lineStyle(2, 0xff2244, 0.5 + 0.5 * Math.sin(now / 40));
     g.lineBetween(b.x, b.y, p.x, p.y);
     g.strokeCircle(b.x, b.y, b.r + 6);
   }
-  g.fillStyle(b.stage === 2 ? 0xe01030 : 0xff5577, 1); g.fillCircle(b.x, b.y, b.r);
+  disc(g, b, b.stage === 2 ? 0xe01030 : 0xff5577);
 }
